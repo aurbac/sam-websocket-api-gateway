@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+  <head>
+   <!-- Global site tag (gtag.js) - Google Analytics -->
+   <script async src="https://www.googletagmanager.com/gtag/js?id=UA-55517703-8"></script>
+   <script>
+   window.dataLayer = window.dataLayer || [];
+   function gtag(){dataLayer.push(arguments);}
+   gtag('js', new Date());
+   gtag('config', 'UA-55517703-8');
+   </script>
+   <link rel="icon" type="image/ico" href="fav/favicon.ico" /> 
+   <link rel="shortcut icon" type="image/ico" href="fav/favicon.ico" /> 
+   <link rel="apple-touch-icon" sizes="57x57" href="fav/touch-icon-iphone-114-smile.png" /> 
+   <link rel="apple-touch-icon" sizes="72x72" href="fav/touch-icon-ipad-144-smile.png" /> 
+   <link rel="apple-touch-icon" sizes="114x114" href="fav/touch-icon-iphone-114-smile.png" /> 
+   <link rel="apple-touch-icon" sizes="144x144" href="fav/touch-icon-ipad-144-smile.png" /> 
+    <!-- Required meta tags -->
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <!-- Bootstrap CSS -->
+    <link rel="stylesheet" href="bootstrap.min.css">
+    <style>
+         .bd-placeholder-img {
+           font-size: 1.125rem;
+           text-anchor: middle;
+           -webkit-user-select: none;
+           -moz-user-select: none;
+           -ms-user-select: none;
+           user-select: none;
+         }
+         @media (min-width: 768px) {
+           .bd-placeholder-img-lg {
+             font-size: 3.5rem;
+           }
+         }
+       </style>
+       <!-- Custom styles for this template -->
+       <link href="cover.css" rel="stylesheet">
+    <title>AWS IoT y WebSocket sin servidores</title>
+  </head>
+  <body class="text-center" id="myBody">
+
+   <main role="main" class="cover" style="padding-top: 8%;">
+         <div class="text-center">
+         <div style="height: 522px;">
+         <img src="foco_apagado_estatico.png" class="rounded img-fluid" id="philips">
+         </div>
+         </div>
+         <h1 class="cover-heading">AWS <strong>IoT</strong> y</h1>
+         <h3>WebSocket sin servidores</h3>
+         <p class="lead"></p>
+         <p class="lead">
+            <a href="#" class="btn btn-lg btn-light" id="btnLight">¡Encender foco!</a>
+         </p>
+         <a href="architecture.html" target="_blank">Diagrama de arquitectura</a>
+         <br>
+   </main>
+
+    <!-- Optional JavaScript -->
+    <!-- jQuery first, then Popper.js, then Bootstrap JS -->
+    <script src="jquery-3.4.1.min.js"></script>
+    <script src="jquery-ui.js"></script>
+    <script src="popper.min.js"></script>
+    <script src="bootstrap.min.js" ></script>
+   
+    <script type = "text/javascript">
+
+
+      var colors = ['#F0A323', '#78B94A', '#35ACCC', '#B12F9E']; 
+      var myStatus = false;
+
+      $(document).ready(function(){
+         $(".cover").css({ 'height': document.body.scrollHeight + "px" });
+         ConnectWebSocket();
+      });
+
+      function changeBulb(status) {
+         $(".cover").css({ 'height': document.body.scrollHeight + "px" });
+         if (status && status!=myStatus){
+            var color_light = colors[Math.floor(Math.random() * 4)];
+            $('#myBody').animate({backgroundColor: color_light}, 1000);
+            var image = $("#philips");
+            image.fadeOut('fast', function () {
+               image.attr('src', 'foco_ilum_estatico.png');
+            });
+            image.one("load",function(){
+               image.fadeIn('fast');
+            });
+            $("#btnLight").removeClass("btn-light");
+            $("#btnLight").addClass("btn-dark");
+            $("#btnLight").text("¡Apagar foco!");
+            myStatus = true;
+         }else if (status==false && status!=myStatus){
+            $('#myBody').animate({backgroundColor: '#333'}, 1000);
+            var image = $("#philips");
+            image.fadeOut('fast', function () {
+               image.attr('src', 'foco_apagado_estatico.png');
+            });
+            image.one("load",function(){
+               image.fadeIn('fast');
+            });
+            $("#btnLight").removeClass("btn-dark");
+            $("#btnLight").addClass("btn-light");
+            $("#btnLight").text("¡Encender foco!");
+            myStatus = false;
+         }
+      }
+
+      function ConnectWebSocket() {
+         if ("WebSocket" in window) {
+            console.log("WebSocket is supported by your Browser!");
+            // Let us open a web socket
+            var ws = new WebSocket("wss://your-websocket-uri");
+         
+            $("#btnLight").click(function(){
+               console.log("Click");
+               message = "my_device,switch";
+               ws.send("{\"message\":\"sendstatus\", \"data\":\""+message+"\"}");               
+            });
+
+            ws.onopen = function() {
+               // Web Socket is connected, send data using send()
+               message = "my_device,new";
+               ws.send("{\"message\":\"sendstatus\", \"data\":\""+message+"\"}");
+               console.log("Message is sent...");
+            };
+
+            ws.onmessage = function (evt) { 
+               var received_msg = evt.data;
+               if (evt.data=="true")
+                  changeBulb(true);
+               else
+                  changeBulb(false);
+               console.log("Message is received..." + received_msg);
+            };
+         
+            ws.onclose = function() { 
+               // websocket is closed.
+               console.log("Connection is closed...");
+               ConnectWebSocket();
+            };
+         } else {
+            // The browser doesn't support WebSocket
+            console.log("WebSocket NOT supported by your Browser!");
+         }
+      }
+   </script>
+
+
+  </body>
+</html>

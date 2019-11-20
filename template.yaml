@@ -1,0 +1,306 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  simple-websockets-for-devices-connected
+
+Parameters:
+  ConnectionsTableName:
+    Type: String
+    Default: 'web_connections'
+    Description: (Required) The name of the new DynamoDB to store connection identifiers for each connected clients. Minimum 3 characters
+    MinLength: 3
+    MaxLength: 50
+    AllowedPattern: ^[A-Za-z_]+$
+    ConstraintDescription: 'Required. Can be characters and underscore only. No numbers or special characters allowed.'
+  DevicesTableName:
+    Type: String
+    Default: 'iot_devices'
+    Description: (Required) The name of the new DynamoDB to store device identifiers. Minimum 3 characters
+    MinLength: 3
+    MaxLength: 50
+    AllowedPattern: ^[A-Za-z_]+$
+    ConstraintDescription: 'Required. Can be characters and underscore only. No numbers or special characters allowed.'
+  WebsiteName:
+    Type: String
+    Description: (Required) The name of the website.
+    MinLength: 3
+    MaxLength: 50
+    ConstraintDescription: 'Required. Domain format required.'
+
+Resources:
+  SimpleChatWebSocket:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: SimpleChatWebSocket
+      ProtocolType: WEBSOCKET
+      RouteSelectionExpression: "$request.body.message"
+  ConnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref SimpleChatWebSocket
+      RouteKey: $connect
+      AuthorizationType: NONE
+      OperationName: ConnectRoute
+      Target: !Join
+        - '/'
+        - - 'integrations'
+          - !Ref ConnectInteg
+  ConnectInteg:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref SimpleChatWebSocket
+      Description: Connect Integration
+      IntegrationType: AWS_PROXY
+      IntegrationUri: 
+        Fn::Sub:
+            arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${OnConnectFunction.Arn}/invocations
+  DisconnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref SimpleChatWebSocket
+      RouteKey: $disconnect
+      AuthorizationType: NONE
+      OperationName: DisconnectRoute
+      Target: !Join
+        - '/'
+        - - 'integrations'
+          - !Ref DisconnectInteg
+  DisconnectInteg:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref SimpleChatWebSocket
+      Description: Disconnect Integration
+      IntegrationType: AWS_PROXY
+      IntegrationUri: 
+        Fn::Sub:
+            arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${OnDisconnectFunction.Arn}/invocations
+  SendRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref SimpleChatWebSocket
+      RouteKey: sendstatus
+      AuthorizationType: NONE
+      OperationName: SendRoute
+      Target: !Join
+        - '/'
+        - - 'integrations'
+          - !Ref SendInteg
+  SendInteg:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref SimpleChatWebSocket
+      Description: Send Integration
+      IntegrationType: AWS_PROXY
+      IntegrationUri: 
+        Fn::Sub:
+            arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${SendStatusFunction.Arn}/invocations
+  Deployment:
+    Type: AWS::ApiGatewayV2::Deployment
+    DependsOn:
+    - ConnectRoute
+    - SendRoute
+    - DisconnectRoute
+    Properties:
+      ApiId: !Ref SimpleChatWebSocket
+  Stage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      StageName: Prod
+      Description: Prod Stage
+      DeploymentId: !Ref Deployment
+      ApiId: !Ref SimpleChatWebSocket
+  ConnectionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+      - AttributeName: "connectionId"
+        AttributeType: "S"
+      KeySchema:
+      - AttributeName: "connectionId"
+        KeyType: "HASH"
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+      SSESpecification:
+        SSEEnabled: True
+      TableName: !Ref ConnectionsTableName
+  DevicesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+      - AttributeName: "deviceId"
+        AttributeType: "S"
+      KeySchema:
+      - AttributeName: "deviceId"
+        KeyType: "HASH"
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+      SSESpecification:
+        SSEEnabled: True
+      TableName: !Ref DevicesTableName
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
+
+  ProcessDynamoDBStreamFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: statusdevice/
+      Handler: app.handler
+      Runtime: nodejs10.x
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref ConnectionsTableName
+          TABLE_NAME_DEVICES: !Ref DevicesTableName
+      Policies:
+      - DynamoDBCrudPolicy:
+          TableName: !Ref ConnectionsTableName
+      - DynamoDBCrudPolicy:
+          TableName: !Ref DevicesTable
+      - Statement:
+        - Effect: Allow
+          Action:
+          - 'execute-api:ManageConnections'
+          Resource:
+          - !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${SimpleChatWebSocket}/*'
+      Events:
+        Stream:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt DevicesTable.StreamArn
+            BatchSize: 100
+            StartingPosition: TRIM_HORIZON
+  ProcessDynamoDBStreamPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+      - SimpleChatWebSocket
+      - ProcessDynamoDBStreamFunction
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ProcessDynamoDBStreamFunction
+      Principal: apigateway.amazonaws.com
+
+
+  OnConnectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: onconnect/
+      Handler: app.handler
+      MemorySize: 256
+      Runtime: nodejs10.x
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref ConnectionsTableName
+      Policies:
+      - DynamoDBCrudPolicy:
+          TableName: !Ref ConnectionsTableName
+  OnConnectPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+      - SimpleChatWebSocket
+      - OnConnectFunction
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref OnConnectFunction
+      Principal: apigateway.amazonaws.com
+  OnDisconnectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ondisconnect/
+      Handler: app.handler
+      MemorySize: 256
+      Runtime: nodejs10.x
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref ConnectionsTableName
+      Policies:
+      - DynamoDBCrudPolicy:
+          TableName: !Ref ConnectionsTableName
+  OnDisconnectPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+      - SimpleChatWebSocket
+      - OnDisconnectFunction
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref OnDisconnectFunction
+      Principal: apigateway.amazonaws.com
+  SendStatusFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: sendstatus/
+      Handler: app.handler
+      MemorySize: 256
+      Runtime: nodejs10.x
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref ConnectionsTableName
+          TABLE_NAME_DEVICES: !Ref DevicesTableName
+      Policies:
+      - DynamoDBCrudPolicy:
+          TableName: !Ref ConnectionsTableName
+      - DynamoDBCrudPolicy:
+          TableName: !Ref DevicesTable
+      - SNSCrudPolicy:
+          TopicName: config-topic
+      - Statement:
+        - Effect: Allow
+          Action:
+          - 'execute-api:ManageConnections'
+          Resource:
+          - !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${SimpleChatWebSocket}/*'
+      - Statement:
+        - Effect: Allow
+          Action:
+          - 'iot-data:*'
+          - 'iot:*'
+          Resource:
+          - '*'
+  SendStatusPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+      - SimpleChatWebSocket
+      - SendStatusFunction
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref SendStatusFunction
+      Principal: apigateway.amazonaws.com
+  WebsiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref WebsiteName
+      AccessControl: PublicRead
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: False
+        IgnorePublicAcls: False
+        BlockPublicPolicy: True
+        RestrictPublicBuckets: True
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: 404.html
+    DeletionPolicy: Retain
+
+Outputs:
+  ConnectionsTableArn:
+    Description: "Connections table ARN"
+    Value: !GetAtt ConnectionsTable.Arn
+
+  OnConnectFunctionArn:
+    Description: "OnConnect function ARN"
+    Value: !GetAtt OnConnectFunction.Arn
+
+  OnDisconnectFunctionArn:
+    Description: "OnDisconnect function ARN"
+    Value: !GetAtt OnDisconnectFunction.Arn
+
+  SendStatusFunctionArn:
+    Description: "SendStatus function ARN"
+    Value: !GetAtt SendStatusFunction.Arn
+
+  WebSocketURI:
+    Description: "The WSS Protocol URI to connect to"
+    Value: !Join [ '', [ 'wss://', !Ref SimpleChatWebSocket, '.execute-api.',!Ref 'AWS::Region','.amazonaws.com/',!Ref 'Stage'] ]
+
+  WebsiteURI:
+    Description: "The website name to upload page."
+    Value: !Join [ '', [ 'http://', !Ref WebsiteName, '.s3-website-',!Ref 'AWS::Region','.amazonaws.com/'] ]
