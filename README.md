@@ -1,4 +1,14 @@
-# sam-websocket-api-gateway
+# SAM - Websockets with Amazon API Gateway
+
+With this project using SAM (Serverless Application Model) you can deploy the AWS services required to have a web page where you can turn a light on and off using Websockets with Amazon API Gateway.
+
+**Diagram architecture**
+
+![Websockets](html/architecture.png)
+
+**Web page**
+
+![Websockets](images/page.png)
 
 ## Deploy using AWS CLI commands
 
